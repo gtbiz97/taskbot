@@ -1,16 +1,17 @@
-"""Выгрузка данных из SQLite в Google Sheets.
+"""Выгрузка данных в Google Sheets через Apps Script веб-приёмник (webhook).
 
-Безопасно работает, даже если Sheets выключен или библиотека недоступна —
-в этом случае функции просто ничего не делают (бот продолжает работать).
+Бот шлёт JSON по защищённой ссылке (GOOGLE_SHEETS_WEBHOOK). Скрипт на стороне
+таблицы пишет данные в листы «Задачи» и «Отчёты». Секрет — только URL и токен.
+Если выключено или недоступно — функции тихо ничего не делают (бот работает).
 """
+import json
 import logging
+import urllib.request
 
 import config
 import db
 
 log = logging.getLogger("sheets")
-
-_client = None
 
 HEADERS = [
     "ID", "Сотрудник", "@username", "Задача", "Описание",
@@ -18,46 +19,32 @@ HEADERS = [
 ]
 
 
-def _get_client():
-    global _client
-    if _client is not None:
-        return _client
-    if not config.SHEETS_ENABLED:
-        return None
+def _post(payload: dict) -> bool:
+    if not config.SHEETS_ENABLED or not config.GOOGLE_SHEETS_WEBHOOK:
+        return False
+    payload["token"] = config.SHEETS_TOKEN
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        config.GOOGLE_SHEETS_WEBHOOK, data=data,
+        headers={"Content-Type": "application/json"},
+    )
     try:
-        import gspread
-        from google.oauth2.service_account import Credentials
-
-        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-        creds = Credentials.from_service_account_file(config.GOOGLE_CREDENTIALS, scopes=scopes)
-        _client = gspread.authorize(creds)
-        return _client
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            body = resp.read().decode("utf-8", "ignore")
+            if "ok" not in body.lower():
+                log.warning("Sheets webhook ответ: %s", body)
+            return True
     except Exception as e:  # noqa: BLE001
-        log.warning("Google Sheets недоступен: %s", e)
-        return None
-
-
-def _worksheet(title: str, rows: int = 1000, cols: int = 20):
-    client = _get_client()
-    if client is None:
-        return None
-    sh = client.open_by_key(config.SPREADSHEET_ID)
-    try:
-        return sh.worksheet(title)
-    except Exception:  # noqa: BLE001
-        return sh.add_worksheet(title=title, rows=rows, cols=cols)
+        log.warning("Sheets webhook ошибка: %s", e)
+        return False
 
 
 def _report_text(task_id: int) -> str:
-    reps = db.reports_for_task(task_id)
-    return " | ".join(r["text"] for r in reps)
+    return " | ".join(r["text"] for r in db.reports_for_task(task_id))
 
 
-def sync_all_tasks():
-    """Полностью перезаписывает лист «Задачи» текущим состоянием БД."""
-    ws = _worksheet("Задачи")
-    if ws is None:
-        return False
+def sync_all_tasks() -> bool:
+    """Перезаписывает лист «Задачи» текущим состоянием БД."""
     rows = [HEADERS]
     for t in db.all_tasks():
         rows.append([
@@ -72,20 +59,13 @@ def sync_all_tasks():
             t["updated_at"],
             _report_text(t["id"]),
         ])
-    ws.clear()
-    ws.update(rows, value_input_option="RAW")
-    log.info("Sheets: выгружено задач: %d", len(rows) - 1)
-    return True
+    return _post({"action": "sync_tasks", "rows": rows})
 
 
-def append_weekly_report(period_label: str, summary_rows: list[list]):
-    """Добавляет блок недельного отчёта на отдельный лист «Отчёты»."""
-    ws = _worksheet("Отчёты")
-    if ws is None:
-        return False
-    block = [[f"Отчёт за {period_label}"]]
-    block += [["Сотрудник", "Всего", "Сделано", "Не сделано", "В работе"]]
+def append_weekly_report(period_label: str, summary_rows: list) -> bool:
+    """Добавляет блок недельного отчёта на лист «Отчёты»."""
+    block = [[f"Отчёт за {period_label}"],
+             ["Сотрудник", "Всего", "Сделано", "Не сделано", "В работе"]]
     block += summary_rows
     block += [[""]]
-    ws.append_rows(block, value_input_option="RAW")
-    return True
+    return _post({"action": "weekly", "rows": block})

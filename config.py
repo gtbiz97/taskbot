@@ -14,9 +14,10 @@ ADMIN_IDS = _int_list(os.getenv("ADMIN_IDS", ""))
 
 DB_PATH = os.getenv("DB_PATH", "taskbot.db")
 
+# ---- Google Sheets (Apps Script webhook) ----
 SHEETS_ENABLED = os.getenv("SHEETS_ENABLED", "0") == "1"
-GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS", "service_account.json")
-SPREADSHEET_ID = os.getenv("SPREADSHEET_ID", "")
+GOOGLE_SHEETS_WEBHOOK = os.getenv("GOOGLE_SHEETS_WEBHOOK", "")
+SHEETS_TOKEN = os.getenv("SHEETS_TOKEN", "")
 
 WEEKLY_REPORT_DAY = os.getenv("WEEKLY_REPORT_DAY", "fri")
 WEEKLY_REPORT_TIME = os.getenv("WEEKLY_REPORT_TIME", "18:00")
