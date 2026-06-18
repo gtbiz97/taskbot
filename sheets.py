@@ -13,6 +13,8 @@ import db
 
 log = logging.getLogger("sheets")
 
+last_error = ""
+
 HEADERS = [
     "ID", "Сотрудник", "@username", "Задача", "Описание",
     "Статус", "Дедлайн", "Создана", "Обновлена", "Отчёты",
@@ -20,7 +22,10 @@ HEADERS = [
 
 
 def _post(payload: dict) -> bool:
+    global last_error
+    last_error = ""
     if not config.SHEETS_ENABLED or not config.GOOGLE_SHEETS_WEBHOOK:
+        last_error = "SHEETS_ENABLED=0 или нет GOOGLE_SHEETS_WEBHOOK"
         return False
     payload["token"] = config.SHEETS_TOKEN
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -33,9 +38,12 @@ def _post(payload: dict) -> bool:
         with urllib.request.urlopen(req, timeout=20) as resp:
             body = resp.read().decode("utf-8", "ignore")
             if "ok" not in body.lower():
+                last_error = "ответ webhook: " + body[:200]
                 log.warning("Sheets webhook ответ: %s", body)
+                return False
             return True
     except Exception as e:  # noqa: BLE001
+        last_error = f"{type(e).__name__}: {e}"
         log.warning("Sheets webhook ошибка: %s", e)
         return False
 

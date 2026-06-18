@@ -4,6 +4,7 @@
 """
 import asyncio
 import logging
+import subprocess
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
@@ -257,8 +258,28 @@ async def cmd_sync(m: Message):
     if not config.is_admin(m.from_user.id):
         return
     ok = sheets.sync_all_tasks()
-    await m.answer("✅ Выгружено в Google Sheets." if ok else
-                   "Google Sheets недоступен или выключен.")
+    if ok:
+        await m.answer("✅ Выгружено в Google Sheets.")
+    else:
+        await m.answer("⚠️ Не удалось выгрузить.\nПричина: " + (sheets.last_error or "?"))
+
+
+@dp.message(Command("update"))
+async def cmd_update(m: Message):
+    if not config.is_admin(m.from_user.id):
+        return
+    await m.answer("⏳ Обновляюсь: git pull + зависимости + перезапуск…")
+    try:
+        pull = subprocess.run(["git", "-C", "/opt/taskbot", "pull", "--ff-only"],
+                              capture_output=True, text=True, timeout=90)
+        out = (pull.stdout + pull.stderr).strip()
+        subprocess.run(["/opt/taskbot/venv/bin/pip", "install", "-q", "-r",
+                        "/opt/taskbot/requirements.txt"], timeout=240)
+        await m.answer(f"✅ Код обновлён:\n{out[:300]}\nПерезапускаю…")
+    except Exception as e:  # noqa: BLE001
+        await m.answer(f"⚠️ Ошибка обновления: {e}")
+        return
+    subprocess.Popen(["systemctl", "restart", "taskbot"])
 
 
 # ---------- Вспомогательное ----------
