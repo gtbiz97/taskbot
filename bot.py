@@ -50,7 +50,9 @@ async def cmd_start(m: Message):
             "/status — открытые задачи\n"
             "/report — собрать недельный отчёт сейчас\n"
             "/employees — список сотрудников\n"
-            "/sync — выгрузить в Google Sheets"
+            "/sync — выгрузить в Google Sheets\n"
+            "/table — ссылка на таблицу-реестр\n\n"
+            f"📊 <b>Реестр задач:</b> {config.SHEET_URL}"
         )
     else:
         await m.answer(
@@ -280,6 +282,18 @@ async def cmd_update(m: Message):
         await m.answer(f"⚠️ Ошибка обновления: {e}")
         return
     subprocess.Popen(["systemctl", "restart", "taskbot"])
+
+
+@dp.message(Command("table"))
+async def cmd_table(m: Message):
+    if not config.is_admin(m.from_user.id):
+        return
+    await m.answer(
+        "📊 <b>Реестр задач (Google Sheets):</b>\n"
+        f"{config.SHEET_URL}\n\n"
+        "Доступ к таблице — только у тех, кому вы дали его в настройках «Поделиться».",
+        disable_web_page_preview=True,
+    )
 
 
 # ---------- Вспомогательное ----------
