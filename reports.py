@@ -1,6 +1,7 @@
 """Формирование еженедельного отчёта: что сделано / что нет по сотрудникам."""
 from collections import defaultdict
 from datetime import date
+from html import escape
 
 import db
 import sheets
@@ -29,12 +30,12 @@ def build_weekly(ref: date | None = None):
         failed = sum(1 for t in emp_tasks if t["status"] == db.STATUS_FAILED)
         in_work = sum(1 for t in emp_tasks if t["status"] in db.OPEN_STATUSES)
 
-        lines.append(f"👤 <b>{emp_name}</b> — всего {total}: ✅ {done} | ❌ {failed} | 🟡 {in_work}")
+        lines.append(f"👤 <b>{escape(emp_name)}</b> — всего {total}: ✅ {done} | ❌ {failed} | 🟡 {in_work}")
         for t in emp_tasks:
             mark = db.STATUS_LABELS.get(t["status"], t["status"])
             reps = db.reports_for_task(t["id"])
-            rep = f" — «{reps[-1]['text']}»" if reps else ""
-            lines.append(f"   • {t['title']} [{mark}]{rep}")
+            rep = f" — «{escape(reps[-1]['text'])}»" if reps else ""
+            lines.append(f"   • {db.task_identifier(t['id'])} {escape(t['title'])} [{mark}]{rep}")
         lines.append("")
 
         sheet_rows.append([emp_name, total, done, failed, in_work])

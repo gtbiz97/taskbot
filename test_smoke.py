@@ -24,6 +24,15 @@ t1 = db.create_task(1, 999, "Сделать отчёт", deadline="до пт")
 t2 = db.create_task(1, 999, "Позвонить клиенту")
 t3 = db.create_task(2, 999, "Подготовить смету")
 
+assert db.task_identifier(t1) == "#1"
+assert db.update_task_title(t2, "Позвонить ключевому клиенту", 999)
+assert db.append_task_description(t2, "Уточнить дату следующей поставки", 999)
+assert db.update_task_deadline(t2, "до среды 12:00", 999)
+updated_t2 = db.get_task(t2)
+assert updated_t2["title"] == "Позвонить ключевому клиенту"
+assert "Уточнить дату следующей поставки" in updated_t2["description"]
+assert updated_t2["deadline"] == "до среды 12:00"
+
 db.set_status(t1, db.STATUS_DONE, 1)
 db.add_report(t1, 1, "Отчёт готов, отправил на почту")
 db.set_status(t2, db.STATUS_FAILED, 1)
@@ -35,6 +44,7 @@ print("\nСтроки для Sheets:", rows)
 
 assert len(db.list_employees()) == 2
 assert rows == [["Иван Иванов", 2, 1, 1, 0], ["Пётр Петров", 1, 0, 0, 1]]
+assert "#1" in text and "#2" in text and "#3" in text
 print("\n✅ Все проверки прошли.")
 
 os.remove(config.DB_PATH)

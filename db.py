@@ -77,12 +77,27 @@ def init_db():
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (task_id) REFERENCES tasks(id)
             );
+
+            CREATE TABLE IF NOT EXISTS task_updates (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id    INTEGER NOT NULL,
+                field      TEXT NOT NULL,
+                old_value  TEXT,
+                new_value  TEXT,
+                changed_by INTEGER NOT NULL,
+                changed_at TEXT NOT NULL,
+                FOREIGN KEY (task_id) REFERENCES tasks(id)
+            );
             """
         )
 
 
 def now() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def task_identifier(task_id: int) -> str:
+    return f"#{task_id}"
 
 
 # ---------- Сотрудники ----------
@@ -149,6 +164,57 @@ def set_status(task_id: int, status: str, changed_by: int):
             "INSERT INTO status_history (task_id, status, changed_by, changed_at) VALUES (?,?,?,?)",
             (task_id, status, changed_by, ts),
         )
+
+
+def update_task_title(task_id: int, title: str, changed_by: int) -> bool:
+    ts = now()
+    with get_conn() as conn:
+        current = conn.execute("SELECT title FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if not current:
+            return False
+        conn.execute("UPDATE tasks SET title=?, updated_at=? WHERE id=?", (title, ts, task_id))
+        conn.execute(
+            """INSERT INTO task_updates (task_id, field, old_value, new_value, changed_by, changed_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (task_id, "title", current["title"], title, changed_by, ts),
+        )
+    return True
+
+
+def update_task_deadline(task_id: int, deadline: str, changed_by: int) -> bool:
+    ts = now()
+    with get_conn() as conn:
+        current = conn.execute("SELECT deadline FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if not current:
+            return False
+        conn.execute("UPDATE tasks SET deadline=?, updated_at=? WHERE id=?", (deadline, ts, task_id))
+        conn.execute(
+            """INSERT INTO task_updates (task_id, field, old_value, new_value, changed_by, changed_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (task_id, "deadline", current["deadline"] or "", deadline, changed_by, ts),
+        )
+    return True
+
+
+def append_task_description(task_id: int, addition: str, changed_by: int) -> bool:
+    ts = now()
+    with get_conn() as conn:
+        current = conn.execute("SELECT description FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if not current:
+            return False
+        old_description = current["description"] or ""
+        entry = f"[{ts}] {addition}"
+        description = f"{old_description}\n\n{entry}" if old_description else entry
+        conn.execute(
+            "UPDATE tasks SET description=?, updated_at=? WHERE id=?",
+            (description, ts, task_id),
+        )
+        conn.execute(
+            """INSERT INTO task_updates (task_id, field, old_value, new_value, changed_by, changed_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (task_id, "description", old_description, description, changed_by, ts),
+        )
+    return True
 
 
 def add_report(task_id: int, employee_id: int, text: str):
