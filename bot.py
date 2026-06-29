@@ -13,7 +13,7 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault, CallbackQuery, Message
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import config
@@ -27,6 +27,26 @@ log = logging.getLogger("bot")
 
 bot = Bot(token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
+
+EMPLOYEE_COMMANDS = [
+    BotCommand(command="start", description="Зарегистрироваться или открыть помощь"),
+    BotCommand(command="my", description="Мои открытые задачи"),
+]
+
+ADMIN_COMMANDS = [
+    BotCommand(command="new", description="Поставить задачу"),
+    BotCommand(command="tasks", description="Открытые задачи с ID"),
+    BotCommand(command="task", description="Показать задачу по ID"),
+    BotCommand(command="edit", description="Отредактировать задачу"),
+    BotCommand(command="append", description="Дополнить задачу"),
+    BotCommand(command="deadline", description="Изменить дедлайн"),
+    BotCommand(command="status", description="Недельная сводка"),
+    BotCommand(command="report", description="Собрать недельный отчёт"),
+    BotCommand(command="employees", description="Список сотрудников"),
+    BotCommand(command="sync", description="Выгрузить в Google Sheets"),
+    BotCommand(command="table", description="Ссылка на таблицу"),
+    BotCommand(command="update", description="Обновить код на сервере"),
+]
 
 
 # ---------- FSM состояния ----------
@@ -573,10 +593,20 @@ def _setup_scheduler():
              config.WEEKLY_REPORT_DAY, config.WEEKLY_REPORT_TIME, config.TIMEZONE)
 
 
+async def _setup_bot_commands():
+    await bot.set_my_commands(EMPLOYEE_COMMANDS, scope=BotCommandScopeDefault())
+    for admin_id in config.ADMIN_IDS:
+        try:
+            await bot.set_my_commands(ADMIN_COMMANDS, scope=BotCommandScopeChat(chat_id=admin_id))
+        except Exception as e:  # noqa: BLE001
+            log.warning("Не удалось обновить меню команд для админа %s: %s", admin_id, e)
+
+
 async def main():
     if not config.BOT_TOKEN:
         raise SystemExit("BOT_TOKEN не задан. Заполните .env")
     db.init_db()
+    await _setup_bot_commands()
     _setup_scheduler()
     log.info("Бот запущен.")
     await dp.start_polling(bot)
