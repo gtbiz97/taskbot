@@ -13,7 +13,14 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault, CallbackQuery, Message
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeChat,
+    BotCommandScopeDefault,
+    CallbackQuery,
+    MenuButtonCommands,
+    Message,
+)
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import config
@@ -128,14 +135,16 @@ async def cmd_tasks(m: Message):
     if not tasks:
         await m.answer("Открытых задач нет.")
         return
-    lines = ["<b>Открытые задачи:</b>"]
+    task_blocks = []
     for t in tasks:
-        deadline = f", дедлайн: {escape(t['deadline'])}" if t["deadline"] else ""
-        lines.append(
-            f"• {db.task_identifier(t['id'])} {escape(t['title'])} — "
-            f"{escape(t['employee_name'])}, {db.STATUS_LABELS.get(t['status'], t['status'])}{deadline}"
+        deadline = escape(t["deadline"]) if t["deadline"] else "не указан"
+        task_blocks.append(
+            f"<b>{db.task_identifier(t['id'])}</b> {escape(t['title'])}\n"
+            f"👤 Сотрудник: {escape(t['employee_name'])}\n"
+            f"📌 Статус: {db.STATUS_LABELS.get(t['status'], t['status'])}\n"
+            f"📅 Дедлайн: {deadline}"
         )
-    await m.answer("\n".join(lines))
+    await m.answer("<b>Открытые задачи:</b>\n\n" + "\n\n".join(task_blocks))
 
 
 @dp.message(Command("task"))
@@ -595,9 +604,11 @@ def _setup_scheduler():
 
 async def _setup_bot_commands():
     await bot.set_my_commands(EMPLOYEE_COMMANDS, scope=BotCommandScopeDefault())
+    await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
     for admin_id in config.ADMIN_IDS:
         try:
             await bot.set_my_commands(ADMIN_COMMANDS, scope=BotCommandScopeChat(chat_id=admin_id))
+            await bot.set_chat_menu_button(chat_id=admin_id, menu_button=MenuButtonCommands())
         except Exception as e:  # noqa: BLE001
             log.warning("Не удалось обновить меню команд для админа %s: %s", admin_id, e)
 
