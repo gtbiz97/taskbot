@@ -43,7 +43,7 @@ EMPLOYEE_COMMANDS = [
 ADMIN_COMMANDS = [
     BotCommand(command="new", description="Поставить задачу"),
     BotCommand(command="tasks", description="Открытые задачи с ID"),
-    BotCommand(command="task", description="Показать задачу по ID"),
+    BotCommand(command="task", description="Выбрать задачу и действие"),
     BotCommand(command="edit", description="Отредактировать задачу"),
     BotCommand(command="append", description="Дополнить задачу"),
     BotCommand(command="deadline", description="Изменить дедлайн"),
@@ -82,7 +82,7 @@ async def cmd_start(m: Message):
             "👋 Вы вошли как <b>руководитель</b>.\n\n"
             "/new — поставить задачу\n"
             "/tasks — открытые задачи с ID\n"
-            "/task 12 — показать задачу по ID\n"
+            "/task — выбрать задачу и действие\n"
             "/edit 12 новый текст — отредактировать задачу\n"
             "/append 12 уточнение — дополнить задачу\n"
             "/deadline 12 новый дедлайн — изменить дедлайн\n"
@@ -131,7 +131,7 @@ async def cmd_employees(m: Message):
 async def cmd_tasks(m: Message):
     if not config.is_admin(m.from_user.id):
         return
-    tasks = [t for t in db.all_tasks() if t["status"] in db.OPEN_STATUSES]
+    tasks = _open_admin_tasks()
     if not tasks:
         await m.answer("Открытых задач нет.")
         return
@@ -151,14 +151,74 @@ async def cmd_tasks(m: Message):
 async def cmd_task(m: Message):
     if not config.is_admin(m.from_user.id):
         return
-    task_id, _, error = _parse_task_update_args(_command_tail(m))
+    raw = _command_tail(m)
+    if not raw:
+        await _send_admin_task_picker(m)
+        return
+    task_id, _, error = _parse_task_update_args(raw)
     if error:
-        await m.answer("Укажите ID задачи: <code>/task 12</code>")
+        await m.answer("Укажите ID задачи: <code>/task 12</code> или отправьте <code>/task</code> для выбора.")
         return
     task = await _admin_task_or_answer(m, task_id)
     if not task:
         return
-    await m.answer(_admin_task_card(task))
+    await m.answer(_admin_task_card(task), reply_markup=kb.admin_task_actions_kb(task_id))
+
+
+@dp.callback_query(F.data.startswith("adm_task:"))
+async def admin_task_selected(c: CallbackQuery):
+    if not config.is_admin(c.from_user.id):
+        await c.answer("Команда доступна только руководителю.", show_alert=True)
+        return
+    task_id = int(c.data.split(":")[1])
+    task = db.get_task(task_id)
+    if not task:
+        await c.answer("Задача не найдена.", show_alert=True)
+        return
+    await c.message.edit_text(_admin_task_card(task), reply_markup=kb.admin_task_actions_kb(task_id))
+    await c.answer()
+
+
+@dp.callback_query(F.data.startswith("admact:"))
+async def admin_task_action(c: CallbackQuery, state: FSMContext):
+    if not config.is_admin(c.from_user.id):
+        await c.answer("Команда доступна только руководителю.", show_alert=True)
+        return
+    _, task_id_s, action = c.data.split(":")
+    task_id = int(task_id_s)
+    task = db.get_task(task_id)
+    if not task:
+        await c.answer("Задача не найдена.", show_alert=True)
+        return
+    if action == "back":
+        await _edit_admin_task_picker(c)
+    elif action == "view":
+        await c.message.edit_text(_admin_task_card(task), reply_markup=kb.admin_task_actions_kb(task_id))
+    elif action == "edit":
+        await state.set_state(EditTask.title)
+        await state.update_data(task_id=task_id)
+        await c.message.edit_text(
+            f"✏️ Отправьте новый основной текст задачи {db.task_identifier(task_id)}.\n\n"
+            "Старый основной текст будет заменён полностью."
+        )
+    elif action == "append":
+        await state.set_state(EditTask.addition)
+        await state.update_data(task_id=task_id)
+        await c.message.edit_text(
+            f"➕ Отправьте уточнение к задаче {db.task_identifier(task_id)}.\n\n"
+            "Старый текст останется, уточнение добавится в описание отдельной записью."
+        )
+    elif action == "deadline":
+        await state.set_state(EditTask.deadline)
+        await state.update_data(task_id=task_id)
+        await c.message.edit_text(
+            f"📅 Отправьте новый дедлайн для задачи {db.task_identifier(task_id)}.\n\n"
+            "Чтобы убрать дедлайн, отправьте <code>-</code>."
+        )
+    else:
+        await c.answer("Неизвестное действие.", show_alert=True)
+        return
+    await c.answer()
 
 
 @dp.message(Command("edit"))
@@ -228,7 +288,7 @@ async def edit_task_title_text(m: Message, state: FSMContext):
         return
     data = await state.get_data()
     await state.clear()
-    await _apply_task_title_update(m, int(data["task_id"]), m.text.strip())
+    await _apply_task_title_update(m, int(data["task_id"]), (m.text or "").strip())
 
 
 @dp.message(EditTask.addition)
@@ -238,7 +298,7 @@ async def append_task_text(m: Message, state: FSMContext):
         return
     data = await state.get_data()
     await state.clear()
-    await _apply_task_append(m, int(data["task_id"]), m.text.strip())
+    await _apply_task_append(m, int(data["task_id"]), (m.text or "").strip())
 
 
 @dp.message(EditTask.deadline)
@@ -248,7 +308,7 @@ async def deadline_task_text(m: Message, state: FSMContext):
         return
     data = await state.get_data()
     await state.clear()
-    await _apply_task_deadline_update(m, int(data["task_id"]), m.text.strip())
+    await _apply_task_deadline_update(m, int(data["task_id"]), (m.text or "").strip())
 
 
 @dp.message(Command("new"))
@@ -466,6 +526,34 @@ async def cmd_table(m: Message):
 
 
 # ---------- Вспомогательное ----------
+def _open_admin_tasks():
+    return [t for t in db.all_tasks() if t["status"] in db.OPEN_STATUSES]
+
+
+async def _send_admin_task_picker(m: Message):
+    tasks = _open_admin_tasks()
+    if not tasks:
+        await m.answer("Открытых задач нет.")
+        return
+    await m.answer(
+        "<b>Выберите задачу:</b>\n\n"
+        "После выбора появятся кнопки действий.",
+        reply_markup=kb.admin_tasks_kb(tasks),
+    )
+
+
+async def _edit_admin_task_picker(c: CallbackQuery):
+    tasks = _open_admin_tasks()
+    if not tasks:
+        await c.message.edit_text("Открытых задач нет.")
+        return
+    await c.message.edit_text(
+        "<b>Выберите задачу:</b>\n\n"
+        "После выбора появятся кнопки действий.",
+        reply_markup=kb.admin_tasks_kb(tasks),
+    )
+
+
 def _command_tail(m: Message) -> str:
     parts = (m.text or "").split(maxsplit=1)
     return parts[1].strip() if len(parts) > 1 else ""
