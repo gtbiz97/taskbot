@@ -162,7 +162,7 @@ async def cmd_task(m: Message):
     task = await _admin_task_or_answer(m, task_id)
     if not task:
         return
-    await m.answer(_admin_task_card(task), reply_markup=kb.admin_task_actions_kb(task_id))
+    await m.answer(_admin_task_card(task), reply_markup=kb.admin_task_actions_kb(task_id, task["status"]))
 
 
 @dp.callback_query(F.data.startswith("adm_task:"))
@@ -175,7 +175,7 @@ async def admin_task_selected(c: CallbackQuery):
     if not task:
         await c.answer("Задача не найдена.", show_alert=True)
         return
-    await c.message.edit_text(_admin_task_card(task), reply_markup=kb.admin_task_actions_kb(task_id))
+    await c.message.edit_text(_admin_task_card(task), reply_markup=kb.admin_task_actions_kb(task_id, task["status"]))
     await c.answer()
 
 
@@ -190,10 +190,25 @@ async def admin_task_action(c: CallbackQuery, state: FSMContext):
     if not task:
         await c.answer("Задача не найдена.", show_alert=True)
         return
+    if task["status"] == db.STATUS_CANCELLED and action not in {"back", "view", "cancel_no"}:
+        await c.message.edit_text(_admin_task_card(task), reply_markup=kb.admin_task_actions_kb(task_id, task["status"]))
+        await c.answer("Задача уже отменена.", show_alert=True)
+        return
     if action == "back":
         await _edit_admin_task_picker(c)
     elif action == "view":
-        await c.message.edit_text(_admin_task_card(task), reply_markup=kb.admin_task_actions_kb(task_id))
+        await c.message.edit_text(_admin_task_card(task), reply_markup=kb.admin_task_actions_kb(task_id, task["status"]))
+    elif action == "cancel":
+        await c.message.edit_text(
+            f"{_admin_task_card(task)}\n\n"
+            "⚠️ Отменить задачу? Она пропадёт из открытых списков, "
+            "сотрудник получит уведомление, а в таблице останется со статусом «Отменена».",
+            reply_markup=kb.admin_task_cancel_confirm_kb(task_id),
+        )
+    elif action == "cancel_no":
+        await c.message.edit_text(_admin_task_card(task), reply_markup=kb.admin_task_actions_kb(task_id, task["status"]))
+    elif action == "cancel_yes":
+        await _apply_task_cancel_from_callback(c, task_id)
     elif action == "edit":
         await state.set_state(EditTask.title)
         await state.update_data(task_id=task_id)
@@ -429,6 +444,13 @@ async def change_status(c: CallbackQuery):
     if not task or task["employee_id"] != c.from_user.id:
         await c.answer("Это не ваша задача.", show_alert=True)
         return
+    if task["status"] == db.STATUS_CANCELLED:
+        await c.message.edit_text(_task_card(task))
+        await c.answer("Задача отменена руководителем.", show_alert=True)
+        return
+    if status not in db.STATUS_LABELS or status == db.STATUS_CANCELLED:
+        await c.answer("Неизвестный статус.", show_alert=True)
+        return
     db.set_status(task_id, status, c.from_user.id)
     _safe_sync()
     await c.message.edit_text(_task_card(db.get_task(task_id)),
@@ -453,6 +475,10 @@ async def report_start(c: CallbackQuery, state: FSMContext):
     if not task or task["employee_id"] != c.from_user.id:
         await c.answer("Это не ваша задача.", show_alert=True)
         return
+    if task["status"] == db.STATUS_CANCELLED:
+        await c.message.edit_text(_task_card(task))
+        await c.answer("Задача отменена руководителем.", show_alert=True)
+        return
     await state.set_state(ReportFSM.text)
     await state.update_data(task_id=task_id)
     await c.message.answer(f"📝 Напишите отчёт по задаче «{escape(task['title'])}»:")
@@ -463,11 +489,15 @@ async def report_start(c: CallbackQuery, state: FSMContext):
 async def report_save(m: Message, state: FSMContext):
     data = await state.get_data()
     task_id = data["task_id"]
+    task = db.get_task(task_id)
+    if task and task["status"] == db.STATUS_CANCELLED:
+        await state.clear()
+        await m.answer("Отчёт не сохранён: задача отменена руководителем.")
+        return
     db.add_report(task_id, m.from_user.id, m.text.strip())
     await state.clear()
     _safe_sync()
     await m.answer("Спасибо, отчёт сохранён ✅")
-    task = db.get_task(task_id)
     for admin in config.ADMIN_IDS:
         try:
             await bot.send_message(
@@ -597,6 +627,8 @@ async def _admin_task_or_answer(m: Message, task_id: int):
 
 
 async def _apply_task_title_update(m: Message, task_id: int, title: str):
+    if await _answer_if_task_cancelled(m, task_id):
+        return
     title = title.strip()
     if not title:
         await m.answer("Текст задачи не может быть пустым.")
@@ -608,6 +640,8 @@ async def _apply_task_title_update(m: Message, task_id: int, title: str):
 
 
 async def _apply_task_append(m: Message, task_id: int, addition: str):
+    if await _answer_if_task_cancelled(m, task_id):
+        return
     addition = addition.strip()
     if not addition:
         await m.answer("Дополнение не может быть пустым.")
@@ -619,12 +653,35 @@ async def _apply_task_append(m: Message, task_id: int, addition: str):
 
 
 async def _apply_task_deadline_update(m: Message, task_id: int, deadline: str):
+    if await _answer_if_task_cancelled(m, task_id):
+        return
     deadline = _normalize_deadline(deadline)
     if not db.update_task_deadline(task_id, deadline, m.from_user.id):
         await m.answer(f"Не нашёл задачу {db.task_identifier(task_id)}.")
         return
     text = "Дедлайн обновлён" if deadline else "Дедлайн убран"
     await _after_task_updated(m, task_id, text)
+
+
+async def _answer_if_task_cancelled(m: Message, task_id: int) -> bool:
+    task = db.get_task(task_id)
+    if task and task["status"] == db.STATUS_CANCELLED:
+        await m.answer(f"Задача {db.task_identifier(task_id)} уже отменена.\n\n{_admin_task_card(task)}")
+        return True
+    return False
+
+
+async def _apply_task_cancel_from_callback(c: CallbackQuery, task_id: int):
+    if not db.cancel_task(task_id, c.from_user.id):
+        await c.answer("Задача не найдена.", show_alert=True)
+        return
+    _safe_sync()
+    task = db.get_task(task_id)
+    await c.message.edit_text(
+        f"✅ Задача отменена.\n\n{_admin_task_card(task)}",
+        reply_markup=kb.admin_task_actions_kb(task_id, task["status"]),
+    )
+    await _notify_employee_task_updated(c.message, task)
 
 
 def _normalize_deadline(deadline: str) -> str:
@@ -642,11 +699,17 @@ async def _after_task_updated(m: Message, task_id: int, result_text: str):
 
 
 async def _notify_employee_task_updated(m: Message, task):
+    if task["status"] == db.STATUS_CANCELLED:
+        text = f"🚫 Задача {db.task_identifier(task['id'])} отменена руководителем:\n\n{_task_card(task)}"
+        reply_markup = None
+    else:
+        text = f"✏️ Обновление задачи {db.task_identifier(task['id'])}:\n\n{_task_card(task)}"
+        reply_markup = kb.task_status_kb(task["id"])
     try:
         await bot.send_message(
             task["employee_id"],
-            f"✏️ Обновление задачи {db.task_identifier(task['id'])}:\n\n{_task_card(task)}",
-            reply_markup=kb.task_status_kb(task["id"]),
+            text,
+            reply_markup=reply_markup,
         )
     except Exception as e:  # noqa: BLE001
         log.warning("Не удалось отправить обновление по задаче %s: %s", task["id"], e)

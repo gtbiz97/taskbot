@@ -43,15 +43,29 @@ def admin_tasks_kb(tasks) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
-def admin_task_actions_kb(task_id: int) -> InlineKeyboardMarkup:
+def admin_task_actions_kb(task_id: int, status: str | None = None) -> InlineKeyboardMarkup:
     """Действия руководителя с выбранной задачей."""
     kb = InlineKeyboardBuilder()
     kb.button(text="👁 Показать", callback_data=f"admact:{task_id}:view")
-    kb.button(text="✏️ Заменить текст", callback_data=f"admact:{task_id}:edit")
-    kb.button(text="➕ Добавить уточнение", callback_data=f"admact:{task_id}:append")
-    kb.button(text="📅 Изменить дедлайн", callback_data=f"admact:{task_id}:deadline")
+    if status != db.STATUS_CANCELLED:
+        kb.button(text="✏️ Заменить текст", callback_data=f"admact:{task_id}:edit")
+        kb.button(text="➕ Добавить уточнение", callback_data=f"admact:{task_id}:append")
+        kb.button(text="📅 Изменить дедлайн", callback_data=f"admact:{task_id}:deadline")
+        kb.button(text="🚫 Отменить задачу", callback_data=f"admact:{task_id}:cancel")
     kb.button(text="↩️ К списку", callback_data=f"admact:{task_id}:back")
-    kb.adjust(2, 2, 1)
+    if status == db.STATUS_CANCELLED:
+        kb.adjust(1)
+    else:
+        kb.adjust(2, 2, 1, 1)
+    return kb.as_markup()
+
+
+def admin_task_cancel_confirm_kb(task_id: int) -> InlineKeyboardMarkup:
+    """Подтверждение отмены задачи руководителем."""
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🚫 Да, отменить", callback_data=f"admact:{task_id}:cancel_yes")
+    kb.button(text="↩️ Не отменять", callback_data=f"admact:{task_id}:cancel_no")
+    kb.adjust(1)
     return kb.as_markup()
 
 

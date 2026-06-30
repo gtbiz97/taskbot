@@ -12,6 +12,7 @@ STATUS_ACCEPTED = "accepted"  # взял в работу
 STATUS_PROGRESS = "progress"  # в работе
 STATUS_DONE = "done"          # сделано
 STATUS_FAILED = "failed"      # не успел / не сделано
+STATUS_CANCELLED = "cancelled"  # отменена руководителем
 
 STATUS_LABELS = {
     STATUS_NEW: "🆕 Новая",
@@ -19,6 +20,7 @@ STATUS_LABELS = {
     STATUS_PROGRESS: "🟡 В работе",
     STATUS_DONE: "✅ Сделано",
     STATUS_FAILED: "❌ Не успел",
+    STATUS_CANCELLED: "🚫 Отменена",
 }
 
 OPEN_STATUSES = (STATUS_NEW, STATUS_ACCEPTED, STATUS_PROGRESS)
@@ -164,6 +166,26 @@ def set_status(task_id: int, status: str, changed_by: int):
             "INSERT INTO status_history (task_id, status, changed_by, changed_at) VALUES (?,?,?,?)",
             (task_id, status, changed_by, ts),
         )
+
+
+def cancel_task(task_id: int, changed_by: int) -> bool:
+    ts = now()
+    with get_conn() as conn:
+        current = conn.execute("SELECT status FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if not current:
+            return False
+        old_status = current["status"]
+        conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE id=?", (STATUS_CANCELLED, ts, task_id))
+        conn.execute(
+            "INSERT INTO status_history (task_id, status, changed_by, changed_at) VALUES (?,?,?,?)",
+            (task_id, STATUS_CANCELLED, changed_by, ts),
+        )
+        conn.execute(
+            """INSERT INTO task_updates (task_id, field, old_value, new_value, changed_by, changed_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (task_id, "status", old_status, STATUS_CANCELLED, changed_by, ts),
+        )
+    return True
 
 
 def update_task_title(task_id: int, title: str, changed_by: int) -> bool:

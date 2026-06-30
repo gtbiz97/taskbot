@@ -74,7 +74,7 @@ def sync_all_tasks() -> bool:
 def append_weekly_report(period_label: str, summary_rows: list) -> bool:
     """Добавляет блок недельного отчёта на лист «Отчёты»."""
     block = [[f"Отчёт за {period_label}"],
-             ["Сотрудник", "Всего", "Сделано", "Не сделано", "В работе"]]
+             ["Сотрудник", "Всего", "Сделано", "Не сделано", "В работе", "Отменено"]]
     block += summary_rows
     block += [[""]]
     return _post({"action": "weekly", "rows": block})

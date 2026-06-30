@@ -43,8 +43,15 @@ print(text)
 print("\nСтроки для Sheets:", rows)
 
 assert len(db.list_employees()) == 2
-assert rows == [["Иван Иванов", 2, 1, 1, 0], ["Пётр Петров", 1, 0, 0, 1]]
+assert rows == [["Иван Иванов", 2, 1, 1, 0, 0], ["Пётр Петров", 1, 0, 0, 1, 0]]
 assert "#1" in text and "#2" in text and "#3" in text
+
+t4 = db.create_task(2, 999, "Отменить тестовую задачу")
+assert db.cancel_task(t4, 999)
+cancelled_t4 = db.get_task(t4)
+assert cancelled_t4["status"] == db.STATUS_CANCELLED
+assert t4 not in [t["id"] for t in db.tasks_for_employee(2, only_open=True)]
+
 print("\n✅ Все проверки прошли.")
 
 os.remove(config.DB_PATH)

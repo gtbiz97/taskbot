@@ -29,8 +29,12 @@ def build_weekly(ref: date | None = None):
         done = sum(1 for t in emp_tasks if t["status"] == db.STATUS_DONE)
         failed = sum(1 for t in emp_tasks if t["status"] == db.STATUS_FAILED)
         in_work = sum(1 for t in emp_tasks if t["status"] in db.OPEN_STATUSES)
+        cancelled = sum(1 for t in emp_tasks if t["status"] == db.STATUS_CANCELLED)
 
-        lines.append(f"👤 <b>{escape(emp_name)}</b> — всего {total}: ✅ {done} | ❌ {failed} | 🟡 {in_work}")
+        lines.append(
+            f"👤 <b>{escape(emp_name)}</b> — всего {total}: "
+            f"✅ {done} | ❌ {failed} | 🟡 {in_work} | 🚫 {cancelled}"
+        )
         for t in emp_tasks:
             mark = db.STATUS_LABELS.get(t["status"], t["status"])
             reps = db.reports_for_task(t["id"])
@@ -38,7 +42,7 @@ def build_weekly(ref: date | None = None):
             lines.append(f"   • {db.task_identifier(t['id'])} {escape(t['title'])} [{mark}]{rep}")
         lines.append("")
 
-        sheet_rows.append([emp_name, total, done, failed, in_work])
+        sheet_rows.append([emp_name, total, done, failed, in_work, cancelled])
 
     text = "\n".join(lines)
     return text, sheet_rows, period_label
