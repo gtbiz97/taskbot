@@ -338,7 +338,10 @@ async def pick_toggle(c: CallbackQuery, state: FSMContext):
 
 
 @dp.callback_query(NewTask.pick, F.data == "pick_cancel")
-async def pick_cancel(c: CallbackQuery, state: FSMContext):
+@dp.callback_query(NewTask.pick, F.data == "new_cancel")
+@dp.callback_query(NewTask.title, F.data == "new_cancel")
+@dp.callback_query(NewTask.deadline, F.data == "new_cancel")
+async def new_task_cancel(c: CallbackQuery, state: FSMContext):
     await state.clear()
     await c.message.edit_text("Постановка задачи отменена.")
     await c.answer()
@@ -353,13 +356,20 @@ async def pick_done(c: CallbackQuery, state: FSMContext):
         return
     await state.set_state(NewTask.title)
     names = ", ".join(escape(db.get_employee(i)["full_name"]) for i in selected)
-    await c.message.edit_text(f"Получатели: <b>{names}</b>\n\n✍️ Введите текст задачи:")
+    await c.message.edit_text(
+        f"Получатели: <b>{names}</b>\n\n✍️ Введите текст задачи:",
+        reply_markup=kb.cancel_task_creation_kb(),
+    )
     await c.answer()
 
 
 @dp.message(NewTask.title)
 async def task_title(m: Message, state: FSMContext):
-    await state.update_data(title=m.text.strip())
+    title = (m.text or "").strip()
+    if not title:
+        await m.answer("Текст задачи не может быть пустым.", reply_markup=kb.cancel_task_creation_kb())
+        return
+    await state.update_data(title=title)
     await state.set_state(NewTask.deadline)
     await m.answer("📅 Укажите дедлайн (например «до пятницы» или дату). "
                    "Или нажмите «Пропустить».", reply_markup=kb.skip_kb())
@@ -373,7 +383,11 @@ async def task_deadline_skip(c: CallbackQuery, state: FSMContext):
 
 @dp.message(NewTask.deadline)
 async def task_deadline(m: Message, state: FSMContext):
-    await _finalize_task(m, state, deadline=m.text.strip(), author_id=m.from_user.id)
+    deadline = (m.text or "").strip()
+    if not deadline:
+        await m.answer("Введите дедлайн текстом или нажмите «Пропустить».", reply_markup=kb.skip_kb())
+        return
+    await _finalize_task(m, state, deadline=deadline, author_id=m.from_user.id)
 
 
 async def _finalize_task(msg: Message, state: FSMContext, deadline: str, author_id: int):

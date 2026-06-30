@@ -55,7 +55,16 @@ def admin_task_actions_kb(task_id: int) -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 
+def cancel_task_creation_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="new_cancel")]]
+    )
+
+
 def skip_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="Пропустить", callback_data="skip")]]
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Пропустить", callback_data="skip")],
+            [InlineKeyboardButton(text="✖️ Отмена", callback_data="new_cancel")],
+        ]
     )
