@@ -48,15 +48,16 @@ def admin_task_actions_kb(task_id: int, status: str | None = None) -> InlineKeyb
     kb = InlineKeyboardBuilder()
     kb.button(text="👁 Показать", callback_data=f"admact:{task_id}:view")
     if status != db.STATUS_CANCELLED:
-        kb.button(text="✏️ Заменить текст", callback_data=f"admact:{task_id}:edit")
+        kb.button(text="✏️ Изменить название", callback_data=f"admact:{task_id}:edit")
         kb.button(text="➕ Добавить уточнение", callback_data=f"admact:{task_id}:append")
         kb.button(text="📅 Изменить дедлайн", callback_data=f"admact:{task_id}:deadline")
+        kb.button(text="🔁 На доработку", callback_data=f"admact:{task_id}:revision")
         kb.button(text="🚫 Отменить задачу", callback_data=f"admact:{task_id}:cancel")
     kb.button(text="↩️ К списку", callback_data=f"admact:{task_id}:back")
     if status == db.STATUS_CANCELLED:
         kb.adjust(1)
     else:
-        kb.adjust(2, 2, 1, 1)
+        kb.adjust(2, 2, 2, 1)
     return kb.as_markup()
 
 

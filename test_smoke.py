@@ -20,7 +20,7 @@ db.init_db()
 db.upsert_employee(1, "ivan", "Иван Иванов")
 db.upsert_employee(2, "petr", "Пётр Петров")
 
-t1 = db.create_task(1, 999, "Сделать отчёт", deadline="до пт")
+t1 = db.create_task(1, 999, "Сделать отчёт", description="Собрать данные за неделю", deadline="до пт")
 t2 = db.create_task(1, 999, "Позвонить клиенту")
 t3 = db.create_task(2, 999, "Подготовить смету")
 
@@ -51,6 +51,13 @@ assert db.cancel_task(t4, 999)
 cancelled_t4 = db.get_task(t4)
 assert cancelled_t4["status"] == db.STATUS_CANCELLED
 assert t4 not in [t["id"] for t in db.tasks_for_employee(2, only_open=True)]
+
+t5 = db.create_task(2, 999, "Тестовая доработка", description="Первичная версия")
+assert db.send_task_to_revision(t5, "Добавить выводы и ссылки", 999)
+revision_t5 = db.get_task(t5)
+assert revision_t5["status"] == db.STATUS_REVISION
+assert "Добавить выводы и ссылки" in revision_t5["description"]
+assert t5 in [t["id"] for t in db.tasks_for_employee(2, only_open=True)]
 
 print("\n✅ Все проверки прошли.")
 

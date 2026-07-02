@@ -59,7 +59,8 @@ ADMIN_COMMANDS = [
 # ---------- FSM состояния ----------
 class NewTask(StatesGroup):
     pick = State()       # выбор сотрудников
-    title = State()      # текст задачи
+    title = State()      # название задачи
+    description = State()  # описание задачи
     deadline = State()   # дедлайн
 
 
@@ -71,6 +72,7 @@ class EditTask(StatesGroup):
     title = State()
     addition = State()
     deadline = State()
+    revision = State()
 
 
 # ================= СОТРУДНИК =================
@@ -83,7 +85,7 @@ async def cmd_start(m: Message):
             "/new — поставить задачу\n"
             "/tasks — открытые задачи с ID\n"
             "/task — выбрать задачу и действие\n"
-            "/edit 12 новый текст — отредактировать задачу\n"
+            "/edit 12 новое название — переименовать задачу\n"
             "/append 12 уточнение — дополнить задачу\n"
             "/deadline 12 новый дедлайн — изменить дедлайн\n"
             "/status — недельная сводка\n"
@@ -138,8 +140,10 @@ async def cmd_tasks(m: Message):
     task_blocks = []
     for t in tasks:
         deadline = escape(t["deadline"]) if t["deadline"] else "не указан"
+        description = f"\n🧾 Описание:\n{escape(t['description'])}" if t["description"] else ""
         task_blocks.append(
-            f"<b>{db.task_identifier(t['id'])}</b> {escape(t['title'])}\n"
+            f"<b>Задача {db.task_identifier(t['id'])}</b>\n"
+            f"🏷 Название: {escape(t['title'])}{description}\n"
             f"👤 Сотрудник: {escape(t['employee_name'])}\n"
             f"📌 Статус: {db.STATUS_LABELS.get(t['status'], t['status'])}\n"
             f"📅 Дедлайн: {deadline}"
@@ -213,8 +217,8 @@ async def admin_task_action(c: CallbackQuery, state: FSMContext):
         await state.set_state(EditTask.title)
         await state.update_data(task_id=task_id)
         await c.message.edit_text(
-            f"✏️ Отправьте новый основной текст задачи {db.task_identifier(task_id)}.\n\n"
-            "Старый основной текст будет заменён полностью."
+            f"✏️ Отправьте новое название задачи {db.task_identifier(task_id)}.\n\n"
+            "Старое название будет заменено полностью."
         )
     elif action == "append":
         await state.set_state(EditTask.addition)
@@ -230,6 +234,13 @@ async def admin_task_action(c: CallbackQuery, state: FSMContext):
             f"📅 Отправьте новый дедлайн для задачи {db.task_identifier(task_id)}.\n\n"
             "Чтобы убрать дедлайн, отправьте <code>-</code>."
         )
+    elif action == "revision":
+        await state.set_state(EditTask.revision)
+        await state.update_data(task_id=task_id)
+        await c.message.edit_text(
+            f"🔁 Напишите комментарий для доработки задачи {db.task_identifier(task_id)}.\n\n"
+            "Сотрудник получит этот комментарий вместе с обновлённой карточкой задачи."
+        )
     else:
         await c.answer("Неизвестное действие.", show_alert=True)
         return
@@ -242,7 +253,7 @@ async def cmd_edit_task(m: Message, state: FSMContext):
         return
     task_id, title, error = _parse_task_update_args(_command_tail(m))
     if error:
-        await m.answer("Формат: <code>/edit 12 новый текст задачи</code>")
+        await m.answer("Формат: <code>/edit 12 новое название задачи</code>")
         return
     task = await _admin_task_or_answer(m, task_id)
     if not task:
@@ -250,7 +261,7 @@ async def cmd_edit_task(m: Message, state: FSMContext):
     if not title:
         await state.set_state(EditTask.title)
         await state.update_data(task_id=task_id)
-        await m.answer(f"✍️ Введите новый текст задачи {db.task_identifier(task_id)}:")
+        await m.answer(f"✍️ Введите новое название задачи {db.task_identifier(task_id)}:")
         return
     await _apply_task_title_update(m, task_id, title)
 
@@ -326,6 +337,16 @@ async def deadline_task_text(m: Message, state: FSMContext):
     await _apply_task_deadline_update(m, int(data["task_id"]), (m.text or "").strip())
 
 
+@dp.message(EditTask.revision)
+async def revision_task_text(m: Message, state: FSMContext):
+    if not config.is_admin(m.from_user.id):
+        await state.clear()
+        return
+    data = await state.get_data()
+    await state.clear()
+    await _apply_task_revision(m, int(data["task_id"]), (m.text or "").strip())
+
+
 @dp.message(Command("new"))
 async def cmd_new(m: Message, state: FSMContext):
     if not config.is_admin(m.from_user.id):
@@ -355,6 +376,7 @@ async def pick_toggle(c: CallbackQuery, state: FSMContext):
 @dp.callback_query(NewTask.pick, F.data == "pick_cancel")
 @dp.callback_query(NewTask.pick, F.data == "new_cancel")
 @dp.callback_query(NewTask.title, F.data == "new_cancel")
+@dp.callback_query(NewTask.description, F.data == "new_cancel")
 @dp.callback_query(NewTask.deadline, F.data == "new_cancel")
 async def new_task_cancel(c: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -372,7 +394,7 @@ async def pick_done(c: CallbackQuery, state: FSMContext):
     await state.set_state(NewTask.title)
     names = ", ".join(escape(db.get_employee(i)["full_name"]) for i in selected)
     await c.message.edit_text(
-        f"Получатели: <b>{names}</b>\n\n✍️ Введите текст задачи:",
+        f"Получатели: <b>{names}</b>\n\n🏷 Введите короткое название задачи:",
         reply_markup=kb.cancel_task_creation_kb(),
     )
     await c.answer()
@@ -382,9 +404,20 @@ async def pick_done(c: CallbackQuery, state: FSMContext):
 async def task_title(m: Message, state: FSMContext):
     title = (m.text or "").strip()
     if not title:
-        await m.answer("Текст задачи не может быть пустым.", reply_markup=kb.cancel_task_creation_kb())
+        await m.answer("Название задачи не может быть пустым.", reply_markup=kb.cancel_task_creation_kb())
         return
     await state.update_data(title=title)
+    await state.set_state(NewTask.description)
+    await m.answer("🧾 Введите описание задачи:", reply_markup=kb.cancel_task_creation_kb())
+
+
+@dp.message(NewTask.description)
+async def task_description(m: Message, state: FSMContext):
+    description = (m.text or "").strip()
+    if not description:
+        await m.answer("Описание задачи не может быть пустым.", reply_markup=kb.cancel_task_creation_kb())
+        return
+    await state.update_data(description=description)
     await state.set_state(NewTask.deadline)
     await m.answer("📅 Укажите дедлайн (например «до пятницы» или дату). "
                    "Или нажмите «Пропустить».", reply_markup=kb.skip_kb())
@@ -409,12 +442,13 @@ async def _finalize_task(msg: Message, state: FSMContext, deadline: str, author_
     data = await state.get_data()
     selected = set(data.get("selected", set()))
     title = data.get("title", "")
+    description = data.get("description", "")
     await state.clear()
 
     created = 0
     created_lines = []
     for emp_id in sorted(selected):
-        task_id = db.create_task(emp_id, author_id, title, deadline=deadline)
+        task_id = db.create_task(emp_id, author_id, title, description=description, deadline=deadline)
         emp = db.get_employee(emp_id)
         created_lines.append(f"• {db.task_identifier(task_id)} — {escape(emp['full_name'])}")
         try:
@@ -448,7 +482,7 @@ async def change_status(c: CallbackQuery):
         await c.message.edit_text(_task_card(task))
         await c.answer("Задача отменена руководителем.", show_alert=True)
         return
-    if status not in db.STATUS_LABELS or status == db.STATUS_CANCELLED:
+    if status not in {db.STATUS_ACCEPTED, db.STATUS_PROGRESS, db.STATUS_DONE, db.STATUS_FAILED}:
         await c.answer("Неизвестный статус.", show_alert=True)
         return
     db.set_status(task_id, status, c.from_user.id)
@@ -461,8 +495,11 @@ async def change_status(c: CallbackQuery):
         try:
             await bot.send_message(
                 admin,
-                f"🔔 {db.task_identifier(task_id)} {escape(task['title'])} → {db.STATUS_LABELS[status]} "
-                f"(сотрудник: {escape(db.get_employee(c.from_user.id)['full_name'])})",
+                "🔔 Обновление статуса\n\n"
+                f"Задача: {db.task_identifier(task_id)}\n"
+                f"Название: {escape(task['title'])}\n"
+                f"Статус: {db.STATUS_LABELS[status]}\n"
+                f"Сотрудник: {escape(db.get_employee(c.from_user.id)['full_name'])}",
             )
         except Exception:  # noqa: BLE001
             pass
@@ -481,7 +518,10 @@ async def report_start(c: CallbackQuery, state: FSMContext):
         return
     await state.set_state(ReportFSM.text)
     await state.update_data(task_id=task_id)
-    await c.message.answer(f"📝 Напишите отчёт по задаче «{escape(task['title'])}»:")
+    await c.message.answer(
+        f"📝 Напишите отчёт по задаче {db.task_identifier(task_id)}\n"
+        f"Название: {escape(task['title'])}"
+    )
     await c.answer()
 
 
@@ -502,8 +542,11 @@ async def report_save(m: Message, state: FSMContext):
         try:
             await bot.send_message(
                 admin,
-                f"📝 Отчёт по {db.task_identifier(task_id)} «{escape(task['title'])}» от "
-                f"{escape(db.get_employee(m.from_user.id)['full_name'])}:\n{escape(m.text.strip())}",
+                "📝 Отчёт по задаче\n\n"
+                f"Задача: {db.task_identifier(task_id)}\n"
+                f"Название: {escape(task['title'])}\n"
+                f"Сотрудник: {escape(db.get_employee(m.from_user.id)['full_name'])}\n\n"
+                f"{escape(m.text.strip())}",
             )
         except Exception:  # noqa: BLE001
             pass
@@ -631,12 +674,12 @@ async def _apply_task_title_update(m: Message, task_id: int, title: str):
         return
     title = title.strip()
     if not title:
-        await m.answer("Текст задачи не может быть пустым.")
+        await m.answer("Название задачи не может быть пустым.")
         return
     if not db.update_task_title(task_id, title, m.from_user.id):
         await m.answer(f"Не нашёл задачу {db.task_identifier(task_id)}.")
         return
-    await _after_task_updated(m, task_id, "Текст задачи обновлён")
+    await _after_task_updated(m, task_id, "Название задачи обновлено")
 
 
 async def _apply_task_append(m: Message, task_id: int, addition: str):
@@ -663,6 +706,22 @@ async def _apply_task_deadline_update(m: Message, task_id: int, deadline: str):
     await _after_task_updated(m, task_id, text)
 
 
+async def _apply_task_revision(m: Message, task_id: int, comment: str):
+    if await _answer_if_task_cancelled(m, task_id):
+        return
+    comment = comment.strip()
+    if not comment:
+        await m.answer("Комментарий для доработки не может быть пустым.")
+        return
+    if not db.send_task_to_revision(task_id, comment, m.from_user.id):
+        await m.answer(f"Не нашёл задачу {db.task_identifier(task_id)}.")
+        return
+    _safe_sync()
+    task = db.get_task(task_id)
+    await m.answer(f"✅ Задача отправлена на доработку.\n\n{_admin_task_card(task)}")
+    await _notify_employee_task_revision(m, task, comment)
+
+
 async def _answer_if_task_cancelled(m: Message, task_id: int) -> bool:
     task = db.get_task(task_id)
     if task and task["status"] == db.STATUS_CANCELLED:
@@ -682,6 +741,23 @@ async def _apply_task_cancel_from_callback(c: CallbackQuery, task_id: int):
         reply_markup=kb.admin_task_actions_kb(task_id, task["status"]),
     )
     await _notify_employee_task_updated(c.message, task)
+
+
+async def _notify_employee_task_revision(m: Message, task, comment: str):
+    try:
+        await bot.send_message(
+            task["employee_id"],
+            "🔁 Задача отправлена на доработку.\n\n"
+            f"<b>Что доработать:</b>\n{escape(comment)}\n\n"
+            f"{_task_card(task)}",
+            reply_markup=kb.task_status_kb(task["id"]),
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("Не удалось отправить доработку по задаче %s: %s", task["id"], e)
+        await m.answer(
+            f"⚠️ Не удалось отправить доработку сотруднику {task['employee_id']} "
+            "(возможно, он не нажал /start у бота)."
+        )
 
 
 def _normalize_deadline(deadline: str) -> str:
@@ -733,10 +809,11 @@ def _admin_task_card(t) -> str:
 
 def _task_card(t) -> str:
     dl = f"\n📅 Дедлайн: {escape(t['deadline'])}" if t["deadline"] else ""
-    description = f"\n\n🧾 Описание:\n{escape(t['description'])}" if t["description"] else ""
+    description = escape(t["description"]) if t["description"] else "не указано"
     return (
         f"📌 <b>Задача {db.task_identifier(t['id'])}</b>\n"
-        f"{escape(t['title'])}{description}{dl}\n\n"
+        f"🏷 <b>Название:</b> {escape(t['title'])}\n\n"
+        f"🧾 <b>Описание:</b>\n{description}{dl}\n\n"
         f"Статус: {db.STATUS_LABELS.get(t['status'], t['status'])}"
     )
 

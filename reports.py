@@ -39,7 +39,11 @@ def build_weekly(ref: date | None = None):
             mark = db.STATUS_LABELS.get(t["status"], t["status"])
             reps = db.reports_for_task(t["id"])
             rep = f" — «{escape(reps[-1]['text'])}»" if reps else ""
-            lines.append(f"   • {db.task_identifier(t['id'])} {escape(t['title'])} [{mark}]{rep}")
+            lines.append(
+                f"   • {db.task_identifier(t['id'])}\n"
+                f"     Название: {escape(t['title'])}\n"
+                f"     Статус: {mark}{rep}"
+            )
         lines.append("")
 
         sheet_rows.append([emp_name, total, done, failed, in_work, cancelled])

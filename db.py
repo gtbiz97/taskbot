@@ -10,6 +10,7 @@ import config
 STATUS_NEW = "new"            # поставлена, сотрудник ещё не отреагировал
 STATUS_ACCEPTED = "accepted"  # взял в работу
 STATUS_PROGRESS = "progress"  # в работе
+STATUS_REVISION = "revision"  # отправлена на доработку
 STATUS_DONE = "done"          # сделано
 STATUS_FAILED = "failed"      # не успел / не сделано
 STATUS_CANCELLED = "cancelled"  # отменена руководителем
@@ -18,12 +19,13 @@ STATUS_LABELS = {
     STATUS_NEW: "🆕 Новая",
     STATUS_ACCEPTED: "📥 Взял",
     STATUS_PROGRESS: "🟡 В работе",
+    STATUS_REVISION: "🔁 На доработке",
     STATUS_DONE: "✅ Сделано",
     STATUS_FAILED: "❌ Не успел",
     STATUS_CANCELLED: "🚫 Отменена",
 }
 
-OPEN_STATUSES = (STATUS_NEW, STATUS_ACCEPTED, STATUS_PROGRESS)
+OPEN_STATUSES = (STATUS_NEW, STATUS_ACCEPTED, STATUS_PROGRESS, STATUS_REVISION)
 
 
 @contextmanager
@@ -184,6 +186,40 @@ def cancel_task(task_id: int, changed_by: int) -> bool:
             """INSERT INTO task_updates (task_id, field, old_value, new_value, changed_by, changed_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
             (task_id, "status", old_status, STATUS_CANCELLED, changed_by, ts),
+        )
+    return True
+
+
+def send_task_to_revision(task_id: int, comment: str, changed_by: int) -> bool:
+    ts = now()
+    with get_conn() as conn:
+        current = conn.execute(
+            "SELECT status, description FROM tasks WHERE id=?",
+            (task_id,),
+        ).fetchone()
+        if not current:
+            return False
+        old_status = current["status"]
+        old_description = current["description"] or ""
+        entry = f"[{ts}] Доработка: {comment}"
+        description = f"{old_description}\n\n{entry}" if old_description else entry
+        conn.execute(
+            "UPDATE tasks SET status=?, description=?, updated_at=? WHERE id=?",
+            (STATUS_REVISION, description, ts, task_id),
+        )
+        conn.execute(
+            "INSERT INTO status_history (task_id, status, changed_by, changed_at) VALUES (?,?,?,?)",
+            (task_id, STATUS_REVISION, changed_by, ts),
+        )
+        conn.execute(
+            """INSERT INTO task_updates (task_id, field, old_value, new_value, changed_by, changed_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (task_id, "status", old_status, STATUS_REVISION, changed_by, ts),
+        )
+        conn.execute(
+            """INSERT INTO task_updates (task_id, field, old_value, new_value, changed_by, changed_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (task_id, "description", old_description, description, changed_by, ts),
         )
     return True
 
